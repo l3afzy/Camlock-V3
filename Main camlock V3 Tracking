@@ -1,0 +1,18 @@
+               -- Camlock Tracking and Rendering
+               RunService.RenderStepped:Connect(function()
+                   if camlockEnabled and lockedTarget and lockedTarget.Character and lockedTarget.Character:FindFirstChild("HumanoidRootPart") then
+                       local humanoid = lockedTarget.Character:FindFirstChild("Humanoid")
+                       
+                       -- Additional null checks and health verification
+                       if not humanoid or humanoid.Health <= 0 or (teamCheck and lockedTarget.Team == localPlayer.Team) then
+                           updateTargetList()
+                           
+                           if #targetList > 0 then
+                               lockedTarget = targetList[1]
+                               statusText.Text = "Camlock: New Target " .. lockedTarget.Name
+                           else
+                               resetCamlock()
+                               statusText.Text = "Camlock: No Valid Targets"
+                               return
+                           end
+                       end
