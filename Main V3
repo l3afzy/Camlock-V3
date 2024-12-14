@@ -48,44 +48,95 @@ local Checkkey = Tabs.KeySys:AddButton({
            
            -- Load the entire remaining script when key is valid
            local function loadCamlockScript()
-               -- Services
-               local Players = game:GetService("Players")
-               local UserInputService = game:GetService("UserInputService")
-               local RunService = game:GetService("RunService")
+-- Variables
+local localPlayer = Players.LocalPlayer
+local camera = workspace.CurrentCamera
+local camlockEnabled = false -- toggle state
+local lockedTarget = nil -- current locked target
+local maxRange = 50 -- maximum range for tracking target (in studs)
+local smoothness = 0.25 -- smoothing factor for camera movement (higher = smoother)
+local trackingUpdateRate = 0.01 -- time (in seconds) between target updates (lower = smoother)
+local lastUpdateTime = 0 -- track the last time the target was updated
+local forceThreshold = 0.3 -- threshold of mouse movement speed to break the camera lock
+local targetList = {} -- List to store potential targets
+local currentTargetIndex = 1 -- Index of current target in the list
+local teamCheck = false -- Default to disabled with saved preference
 
-               -- Variables
-               local localPlayer = Players.LocalPlayer
-               local camera = workspace.CurrentCamera
-               local camlockEnabled = false -- toggle state
-               local lockedTarget = nil -- current locked target
-               local maxRange = 50 -- maximum range for tracking target (in studs)
-               local smoothness = 0.25 -- smoothing factor for camera movement (higher = smoother)
-               local trackingUpdateRate = 0.01 -- time (in seconds) between target updates (lower = smoother)
-               local lastUpdateTime = 0 -- track the last time the target was updated
-               local forceThreshold = 0.3 -- threshold of mouse movement speed to break the camera lock
-               local targetList = {} -- List to store potential targets
-               local currentTargetIndex = 1 -- Index of current target in the list
-               local teamCheck = false -- Default to disabled
+-- Camlock Recovery Variables
+local camlockBrokenTime = 0
+local camlockRecoveryDelay = 1 -- Delay before camlock can be re-enabled
 
-               -- Camlock Recovery Variables
-               local camlockBrokenTime = 0
-               local camlockRecoveryDelay = 1 -- Delay before camlock can be re-enabled
+-- UI for Toggle State
+local screenGui = Instance.new("ScreenGui")
+screenGui.Name = "CamlockStatusUI"
+screenGui.Parent = localPlayer:WaitForChild("PlayerGui")
+screenGui.ResetOnSpawn = false  -- CRITICAL: Prevents UI from being destroyed on respawn
 
-               -- UI for Toggle State
-               local screenGui = Instance.new("ScreenGui")
-               screenGui.Name = "CamlockStatusUI"
-               screenGui.Parent = localPlayer:WaitForChild("PlayerGui")
+local statusText = Instance.new("TextLabel")
+statusText.Size = UDim2.new(0.3, 0, 0.05, 0)
+statusText.Position = UDim2.new(0.35, 0, 0.1, 0) 
+statusText.BackgroundTransparency = 1
+statusText.TextSize = 24
+statusText.TextColor3 = Color3.fromRGB(255, 255, 255)
+statusText.TextStrokeTransparency = 0
+statusText.Text = "Camlock: Ready (Team Check Disabled)"
+statusText.Parent = screenGui
 
-               local statusText = Instance.new("TextLabel")
-               statusText.Size = UDim2.new(0.3, 0, 0.05, 0)
-               statusText.Position = UDim2.new(0.35, 0, 0.1, 0) 
-               statusText.BackgroundTransparency = 1
-               statusText.TextSize = 24
-               statusText.TextColor3 = Color3.fromRGB(255, 255, 255)
-               statusText.TextStrokeTransparency = 0
-               statusText.Text = "Camlock: Ready (Team Check Disabled)"
-               statusText.Parent = screenGui
+-- Enhanced Death Handling Function
+local function handleCharacterDeath()
+    resetCamlock()
+    
+    -- Ensure statusText remains visible
+    if statusText then
+        statusText.Text = "Camlock: Disabled (Character Died)"
+        statusText.Visible = true
+    end
+end
 
+-- Character Death Handler Setup
+local function setupCharacterDeathHandler()
+    local character = localPlayer.Character
+    if not character then return end
+    
+    local humanoid = character:FindFirstChildOfClass("Humanoid")
+    if not humanoid then return end
+    
+    humanoid.Died:Connect(handleCharacterDeath)
+end
+
+-- Initial Setup
+setupCharacterDeathHandler()
+
+-- Re-attach Handler on Respawn
+localPlayer.CharacterAdded:Connect(function()
+    setupCharacterDeathHandler()
+    
+    -- Reset status text after a short delay to ensure UI is ready
+    task.wait(0.5)
+    if statusText then
+        statusText.Text = "Camlock: Ready (Team Check Disabled)"
+    end
+end)
+-- NEW: Function to handle character death and GUI management
+local function handleCharacterDeath()
+    -- Reset camlock when character dies
+    resetCamlock()
+    
+    -- Optional: Hide or modify the UI when dead
+    if screenGui then
+        screenGui.Enabled = false
+    end
+    
+    localPlayer.CharacterAdded:Wait()
+    
+    if screenGui then
+        screenGui.Enabled = true
+    end
+    
+    camlockEnabled = false
+    lockedTarget = nil
+    statusText.Text = "Camlock: Ready (Team Check Disabled)"
+end
                local function resetCamlock()
                    camlockEnabled = false
                    lockedTarget = nil
