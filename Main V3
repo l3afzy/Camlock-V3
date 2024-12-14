@@ -1,0 +1,312 @@
+local KeyGuardLibrary = loadstring(game:HttpGet("https://cdn.keyguardian.org/library/v1.0.0.lua"))()
+local trueData = "f427a5aadc4e405cbf111175addbc5f6"
+local falseData = "abcf64bac4834c5796eb62b7f40e3539"
+
+KeyGuardLibrary.Set({
+  publicToken = "0b1fde5ec0a84f60bb465c14b3251fbc",
+  privateToken = "bcb9e6d2103c4a71bdd28a772f7d5185",
+  trueData = trueData,
+  falseData = falseData,
+})
+
+local Fluent = loadstring(game:HttpGet("https://github.com/dawid-scripts/Fluent/releases/latest/download/main.lua"))()
+local key = ""
+
+local Window = Fluent:CreateWindow({
+    Title = "Camlock V3+",
+    SubTitle = "KeySystem",
+    TabWidth = 160,
+    Size = UDim2.fromOffset(580, 340),
+    Acrylic = false,
+    Theme = "Dark",
+    MinimizeKey = Enum.KeyCode.LeftControl
+})
+
+local Tabs = {
+    KeySys = Window:AddTab({ Title = "Key System", Icon = "key" }),
+}
+
+local Entkey = Tabs.KeySys:AddInput("Input", {
+    Title = "Enter Key",
+    Description = "Enter Key Here",
+    Default = "",
+    Placeholder = "Enter key…",
+    Numeric = false,
+    Finished = false,
+    Callback = function(Value)
+        key = Value
+    end
+})
+
+local Checkkey = Tabs.KeySys:AddButton({
+    Title = "Check Key",
+    Description = "Enter Key before pressing this button",
+    Callback = function()
+        local response = KeyGuardLibrary.validateDefaultKey(key)
+        if response == trueData then
+           print("Key is valid")
+           
+           -- Load the entire remaining script when key is valid
+           local function loadCamlockScript()
+               -- Services
+               local Players = game:GetService("Players")
+               local UserInputService = game:GetService("UserInputService")
+               local RunService = game:GetService("RunService")
+
+               -- Variables
+               local localPlayer = Players.LocalPlayer
+               local camera = workspace.CurrentCamera
+               local camlockEnabled = false -- toggle state
+               local lockedTarget = nil -- current locked target
+               local maxRange = 50 -- maximum range for tracking target (in studs)
+               local smoothness = 0.25 -- smoothing factor for camera movement (higher = smoother)
+               local trackingUpdateRate = 0.01 -- time (in seconds) between target updates (lower = smoother)
+               local lastUpdateTime = 0 -- track the last time the target was updated
+               local forceThreshold = 0.3 -- threshold of mouse movement speed to break the camera lock
+               local targetList = {} -- List to store potential targets
+               local currentTargetIndex = 1 -- Index of current target in the list
+               local teamCheck = false -- Default to disabled
+
+               -- Camlock Recovery Variables
+               local camlockBrokenTime = 0
+               local camlockRecoveryDelay = 1 -- Delay before camlock can be re-enabled
+
+               -- UI for Toggle State
+               local screenGui = Instance.new("ScreenGui")
+               screenGui.Name = "CamlockStatusUI"
+               screenGui.Parent = localPlayer:WaitForChild("PlayerGui")
+
+               local statusText = Instance.new("TextLabel")
+               statusText.Size = UDim2.new(0.3, 0, 0.05, 0)
+               statusText.Position = UDim2.new(0.35, 0, 0.1, 0) 
+               statusText.BackgroundTransparency = 1
+               statusText.TextSize = 24
+               statusText.TextColor3 = Color3.fromRGB(255, 255, 255)
+               statusText.TextStrokeTransparency = 0
+               statusText.Text = "Camlock: Ready (Team Check Disabled)"
+               statusText.Parent = screenGui
+
+               local function resetCamlock()
+                   camlockEnabled = false
+                   lockedTarget = nil
+                   targetList = {}
+                   currentTargetIndex = 1
+                   camlockBrokenTime = tick()
+                   statusText.Text = "Camlock: Broken By Force"
+               end
+
+               local function updateCamlockStatus()
+                   if camlockEnabled then
+                       statusText.Text = teamCheck and 
+                           "Camlock: ON (Team Check Enabled)" or 
+                           "Camlock: ON (Team Check Disabled)"
+                   end
+               end
+
+               local function toggleTeamCheck()
+                   teamCheck = not teamCheck
+                   updateCamlockStatus()
+               end
+
+               local function toggleCamlock()
+                   -- Check if enough time has passed since being broken
+                   if tick() - camlockBrokenTime < camlockRecoveryDelay then
+                       statusText.Text = "Camlock: Cooling Down"
+                       return
+                   end
+
+                   camlockEnabled = not camlockEnabled
+                   if camlockEnabled then
+                       updateTargetList()
+                       if #targetList == 0 then
+                           statusText.Text = "Camlock: No Targets Found"
+                           camlockEnabled = false
+                       else
+                           lockedTarget = targetList[1]
+                           updateCamlockStatus()
+                           statusText.Text = statusText.Text .. " - Target: " .. lockedTarget.Name
+                       end
+                   else
+                       resetCamlock()
+                       statusText.Text = "Camlock: OFF"
+                   end
+               end
+
+               -- On first load, set initial status to Ready with Team Check state
+               statusText.Text = "Camlock: Ready (Team Check " .. (teamCheck and "Enabled)" or "Disabled)")
+
+               local function updateTargetList()
+                   targetList = {}
+                   
+                   -- Improved target selection with multiple criteria
+                   for _, player in ipairs(Players:GetPlayers()) do
+                       local character = player.Character
+                       local humanoidRootPart = character and character:FindFirstChild("HumanoidRootPart")
+                       local humanoid = character and character:FindFirstChild("Humanoid")
+                       
+                       -- Team check logic
+                       local isValidTarget = player ~= localPlayer 
+                                              and humanoidRootPart 
+                                              and humanoid 
+                                              and humanoid.Health > 0
+                       
+                       if teamCheck and player.Team == localPlayer.Team then
+                           isValidTarget = false
+                       end
+                       
+                       if isValidTarget then
+                           local distance = (localPlayer.Character.HumanoidRootPart.Position - humanoidRootPart.Position).Magnitude
+                           
+                           if distance <= maxRange then
+                               table.insert(targetList, player)
+                           end
+                       end
+                   end
+                   
+                   -- Sort targets by distance
+                   table.sort(targetList, function(a, b) 
+                       local distA = (localPlayer.Character.HumanoidRootPart.Position - a.Character.HumanoidRootPart.Position).Magnitude
+                       local distB = (localPlayer.Character.HumanoidRootPart.Position - b.Character.HumanoidRootPart.Position).Magnitude
+                       return distA < distB
+                   end)
+               end
+
+               local function switchTarget()
+                   if #targetList > 0 then
+                       currentTargetIndex = currentTargetIndex % #targetList + 1
+                       lockedTarget = targetList[currentTargetIndex]
+                       statusText.Text = "Camlock: Target Switched to " .. lockedTarget.Name
+                   else
+                       statusText.Text = "Camlock: No Targets Available"
+                       resetCamlock()
+                   end
+               end
+
+               -- First-Person and Third-Person Mouse Movement Detection
+               local function detectMouseMovement()
+                   local mouseMovement = 0
+                   
+                   local success, deltaX, deltaY = pcall(function()
+                       local delta = UserInputService:GetMouseDelta()
+                       return math.abs(delta.X), math.abs(delta.Y)
+                   end)
+                   
+                   if success then
+                       mouseMovement = math.sqrt(deltaX^2 + deltaY^2)
+                   end
+                   
+                   return mouseMovement
+               end
+
+               -- Enhanced Mouse Force Breaking and Recovery Mechanism
+               local mouseMovementHistory = {}
+               local historySampleSize = 5 -- Number of previous mouse movements to track
+
+               RunService.Heartbeat:Connect(function()
+                   -- Recovery mechanism
+                   if not camlockEnabled and tick() - camlockBrokenTime >= camlockRecoveryDelay then
+                       statusText.Text = "Camlock: Ready"
+                   end
+
+                   if camlockEnabled and lockedTarget then
+                       local mouseMovement = detectMouseMovement()
+
+                       -- Store mouse movement in history
+                       table.insert(mouseMovementHistory, mouseMovement)
+                       if #mouseMovementHistory > historySampleSize then
+                           table.remove(mouseMovementHistory, 1)
+                       end
+
+                       -- Calculate average mouse movement
+                       local averageMovement = 0
+                       for _, movement in ipairs(mouseMovementHistory) do
+                           averageMovement = averageMovement + movement
+                       end
+                       averageMovement = averageMovement / #mouseMovementHistory
+
+                       -- Check if mouse movement exceeds force threshold more consistently
+                       if averageMovement > forceThreshold * 100 then
+                           resetCamlock()
+                       end
+                   end
+               end)
+
+               -- Keybinds 
+               UserInputService.InputBegan:Connect(function(input, isProcessed)
+                   if isProcessed then return end
+                   if input.KeyCode == Enum.KeyCode.Y then -- Toggle Camlock
+                       toggleCamlock()
+                   elseif input.KeyCode == Enum.KeyCode.T and camlockEnabled then -- Switch Target
+                       switchTarget()
+                   elseif input.KeyCode == Enum.KeyCode.U then -- Toggle Team Check
+                       toggleTeamCheck()
+                   end
+               end)
+
+               -- Camlock Tracking and Rendering
+               RunService.RenderStepped:Connect(function()
+                   if camlockEnabled and lockedTarget and lockedTarget.Character and lockedTarget.Character:FindFirstChild("HumanoidRootPart") then
+                       local humanoid = lockedTarget.Character:FindFirstChild("Humanoid")
+                       
+                       -- Additional null checks and health verification
+                       if not humanoid or humanoid.Health <= 0 or (teamCheck and lockedTarget.Team == localPlayer.Team) then
+                           updateTargetList()
+                           
+                           if #targetList > 0 then
+                               lockedTarget = targetList[1]
+                               statusText.Text = "Camlock: New Target " .. lockedTarget.Name
+                           else
+                               resetCamlock()
+                               statusText.Text = "Camlock: No Valid Targets"
+                               return
+                           end
+                       end
+
+                       local cameraPosition = camera.CFrame.Position
+                       local targetPosition = lockedTarget.Character.HumanoidRootPart.Position
+
+                       camera.CFrame = camera.CFrame:Lerp(CFrame.new(cameraPosition, targetPosition), smoothness)
+                   end
+               end)
+
+               -- Target Tracking
+               RunService.Heartbeat:Connect(function()
+                   if camlockEnabled then
+                       if tick() - lastUpdateTime >= trackingUpdateRate then
+                           if not lockedTarget or not lockedTarget.Character or lockedTarget.Character.Humanoid.Health <= 0 
+                              or (teamCheck and lockedTarget.Team == localPlayer.Team) then
+                               updateTargetList()
+                               
+                               if #targetList > 0 then
+                                   lockedTarget = targetList[1]
+                                   currentTargetIndex = 1
+                                   statusText.Text = "Camlock: New Target " .. lockedTarget.Name
+                               else
+                                   resetCamlock()
+                                   statusText.Text = "Camlock: No Nearby Humanoids"
+                               end
+                               
+                               lastUpdateTime = tick()
+                           end
+                       end
+                   end
+               end)
+           end
+           
+           -- Call the function to load the Camlock script
+           loadCamlockScript()
+        else
+           print("Key is invalid")
+        end
+    end
+})
+
+local Getkey = Tabs.KeySys:AddButton({
+    Title = "Get Key",
+    Description = "Get Key here",
+    Callback = function()
+       setclipboard(KeyGuardLibrary.getLink())
+    end
+})
+
+Window:SelectTab(1)
