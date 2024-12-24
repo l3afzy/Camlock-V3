@@ -1,99 +1,313 @@
-local KeyGuardLibrary = loadstring(game:HttpGet("https://cdn.keyguardian.org/library/v1.0.0.lua"))()
-local trueData = "f427a5aadc4e405cbf111175addbc5f6"
-local falseData = "abcf64bac4834c5796eb62b7f40e3539"
-
-KeyGuardLibrary.Set({
-  publicToken = "0b1fde5ec0a84f60bb465c14b3251fbc",
-  privateToken = "bcb9e6d2103c4a71bdd28a772f7d5185",
-  trueData = trueData,
-  falseData = falseData,
-})
-
-local Fluent = loadstring(game:HttpGet("https://github.com/dawid-scripts/Fluent/releases/latest/download/main.lua"))()
-local key = ""
-
-local Window = Fluent:CreateWindow({
-    Title = "Camlock V3+",
-    SubTitle = "KeySystem",
-    TabWidth = 160,
-    Size = UDim2.fromOffset(580, 340),
-    Acrylic = false,
-    Theme = "Dark",
-    MinimizeKey = Enum.KeyCode.LeftControl
-})
-
-local Tabs = {
-    KeySys = Window:AddTab({ Title = "Key System", Icon = "key" }),
-}
-
-local Entkey = Tabs.KeySys:AddInput("Input", {
-    Title = "Enter Key",
-    Description = "Enter Key Here",
-    Default = "",
-    Placeholder = "Enter key…",
-    Numeric = false,
-    Finished = false,
-    Callback = function(Value)
-        key = Value
-    end
-})
-
-local Checkkey = Tabs.KeySys:AddButton({
-    Title = "Check Key",
-    Description = "Enter Key before pressing this button",
-    Callback = function()
-        local response = KeyGuardLibrary.validateDefaultKey(key)
-        if response == trueData then
-           print("Key is valid")
-           
-           -- Load the entire remaining script when key is valid
-           local function loadCamlockScript()
--- Variables
+-- Services
+local Players = game:GetService("Players")
+local UserInputService = game:GetService("UserInputService")
+local RunService = game:GetService("RunService")
+local VirtualInputManager = game:GetService("VirtualInputManager")
 local localPlayer = Players.LocalPlayer
 local camera = workspace.CurrentCamera
-local camlockEnabled = false -- toggle state
-local lockedTarget = nil -- current locked target
-local maxRange = 50 -- maximum range for tracking target (in studs)
-local smoothness = 0.25 -- smoothing factor for camera movement (higher = smoother)
-local trackingUpdateRate = 0.01 -- time (in seconds) between target updates (lower = smoother)
-local lastUpdateTime = 0 -- track the last time the target was updated
-local forceThreshold = 0.3 -- threshold of mouse movement speed to break the camera lock
-local targetList = {} -- List to store potential targets
-local currentTargetIndex = 1 -- Index of current target in the list
-local teamCheck = false -- Default to disabled with saved preference
 
--- Camlock Recovery Variables
-local camlockBrokenTime = 0
-local camlockRecoveryDelay = 1 -- Delay before camlock can be re-enabled
+-- Settings
+local Settings = {
+    Circle = {
+        Size = 100,            
+        ScaleMultiplier = 1,   
+        MinSize = 50,          
+        MaxSize = 300,         
+    },
+    Keys = {
+        IncreaseSize = Enum.KeyCode.RightBracket,
+        DecreaseSize = Enum.KeyCode.LeftBracket,
+        SizeStep = 0.1,
+        ToggleMode = Enum.KeyCode.V,
+        ToggleTeamCheck = Enum.KeyCode.B  -- New key for team check
+    },
+    Mode = {
+        IsDynamic = true,
+        TeamCheckEnabled = false  -- New team check setting
+    }
+}
 
--- UI for Toggle State
+-- Core camlock settings
+local camlockEnabled = false      
+local lockedTarget = nil          
+local maxRange = 1200              
+local smoothness = 0.40           
+local trackingUpdateRate = 0.01   
+local lastUpdateTime = 0          
+
+-- Mouse force break settings
+local forceThreshold = 0.3        
+local mouseMovementHistory = {}    
+local historySampleSize = 5       
+
+-- Target management
+local targetList = {}             
+local currentTargetIndex = 1      
+
+-- Click spam settings
+local clickSpamEnabled = false    
+local clickSpamActive = false     -- New variable to track actual clicking state
+local clickInterval = 0.01        
+local lastClickTime = 0                  
+
+-- Camlock recovery settings
+local camlockBrokenTime = 0       
+local camlockRecoveryDelay = 0.3  
+
+-- Dynamic activation settings
+local aimRadius = 300             
+local isAiming = false            
+local closestInCircle = nil       
+local targetAcquireDelay = 0.1    
+local lastTargetTime = 0          
+local currentTarget = nil         
+local targetAcquisitionStartTime = 0  
+
+-- Create aim circle UI
 local screenGui = Instance.new("ScreenGui")
 screenGui.Name = "CamlockStatusUI"
 screenGui.Parent = localPlayer:WaitForChild("PlayerGui")
-screenGui.ResetOnSpawn = false  -- CRITICAL: Prevents UI from being destroyed on respawn
+screenGui.ResetOnSpawn = false
 
+-- Create aim circle
+local aimCircle = Instance.new("Frame")
+aimCircle.Name = "AimCircle"
+aimCircle.Size = UDim2.new(0, aimRadius * 2, 0, aimRadius * 2)
+aimCircle.BackgroundTransparency = 1
+aimCircle.AnchorPoint = Vector2.new(0.5, 0.5)
+aimCircle.Parent = screenGui
+
+local circle = Instance.new("UICorner")
+circle.CornerRadius = UDim.new(1, 0)
+circle.Parent = aimCircle
+
+local circleStroke = Instance.new("UIStroke")
+circleStroke.Color = Color3.fromRGB(255, 255, 255)
+circleStroke.Transparency = 0.7
+circleStroke.Thickness = 1
+circleStroke.Parent = aimCircle
+
+-- Progress indicator
+local progressCircle = Instance.new("Frame")
+progressCircle.Name = "ProgressCircle"
+progressCircle.Size = UDim2.new(1, 0, 1, 0)
+progressCircle.BackgroundTransparency = 1
+progressCircle.AnchorPoint = Vector2.new(0.5, 0.5)
+progressCircle.Position = UDim2.new(0.5, 0, 0.5, 0)
+progressCircle.Parent = aimCircle
+
+local progressCorner = Instance.new("UICorner")
+progressCorner.CornerRadius = UDim.new(1, 0)
+progressCorner.Parent = progressCircle
+
+local progressStroke = Instance.new("UIStroke")
+progressStroke.Color = Color3.fromRGB(0, 255, 0)
+progressStroke.Transparency = 0.5
+progressStroke.Thickness = 2
+progressStroke.Parent = progressCircle
+
+-- Status text
 local statusText = Instance.new("TextLabel")
 statusText.Size = UDim2.new(0.3, 0, 0.05, 0)
-statusText.Position = UDim2.new(0.35, 0, 0.1, 0) 
+statusText.Position = UDim2.new(0.35, 0, 0.1, 0)
 statusText.BackgroundTransparency = 1
 statusText.TextSize = 24
 statusText.TextColor3 = Color3.fromRGB(255, 255, 255)
 statusText.TextStrokeTransparency = 0
-statusText.Text = "Camlock: Ready (Team Check Disabled)"
+statusText.Text = "Dynamic Camlock: Active"
 statusText.Parent = screenGui
 
--- Enhanced Death Handling Function
-local function handleCharacterDeath()
-    resetCamlock()
-    
-    -- Ensure statusText remains visible
-    if statusText then
-        statusText.Text = "Camlock: Disabled (Character Died)"
-        statusText.Visible = true
+-- Function to update aim circle position
+local function updateAimCirclePosition()
+    local mouseLocation = UserInputService:GetMouseLocation()
+    aimCircle.Position = UDim2.new(0, mouseLocation.X, 0, mouseLocation.Y)
+end
+
+-- Function to get health color
+local function getHealthColor(health, maxHealth)
+    local percentage = (health / maxHealth) * 100
+    if percentage >= 70 then
+        return Color3.fromRGB(0, 255, 0)
+    elseif percentage >= 40 then
+        return Color3.fromRGB(255, 165, 0)
+    else
+        return Color3.fromRGB(255, 0, 0)
     end
 end
 
--- Character Death Handler Setup
+--wallcheck
+local function isTargetVisible(targetCharacter)
+    if not localPlayer.Character or not targetCharacter then return false end
+    
+    local raycastParams = RaycastParams.new()
+    raycastParams.FilterType = Enum.RaycastFilterType.Blacklist
+    raycastParams.FilterDescendantsInstances = {localPlayer.Character, targetCharacter}
+    
+    -- Optimized check points for better performance
+    local checkPoints = {
+        targetCharacter.HumanoidRootPart.Position,
+        targetCharacter.HumanoidRootPart.Position + Vector3.new(0, 1.5, 0), -- Reduced number of checks
+        targetCharacter.HumanoidRootPart.Position + Vector3.new(0, -1.5, 0)
+    }
+    
+    local cameraPosition = camera.CFrame.Position
+    
+    -- Use any() for early return
+    for _, point in ipairs(checkPoints) do
+        local direction = (point - cameraPosition).Unit
+        local distance = (point - cameraPosition).Magnitude
+        
+        if not workspace:Raycast(cameraPosition, direction * distance, raycastParams) then
+            return true
+        end
+    end
+    
+    return false
+end
+
+--tc
+local function isTeammate(player)
+    if not Settings.Mode.TeamCheckEnabled then return false end
+    
+    -- Check if both players have a team
+    if player.Team and localPlayer.Team then
+        return player.Team == localPlayer.Team
+    end
+    
+    -- Alternative team check using character properties
+    local playerChar = player.Character
+    local localChar = localPlayer.Character
+    
+    if playerChar and localChar then
+        -- Check for team value in character
+        local playerTeam = playerChar:FindFirstChild("Team")
+        local localTeam = localChar:FindFirstChild("Team")
+        
+        if playerTeam and localTeam and playerTeam.Value == localTeam.Value then
+            return true
+        end
+        
+        -- Check for team-colored parts
+        local playerTeamColor = playerChar:FindFirstChild("TeamColor")
+        local localTeamColor = localChar:FindFirstChild("TeamColor")
+        
+        if playerTeamColor and localTeamColor and playerTeamColor.Value == localTeamColor.Value then
+            return true
+        end
+    end
+    
+    return false
+end
+
+-- Function to find closest player in aim circle
+local function findClosestPlayerInCircle()
+    local mousePos = UserInputService:GetMouseLocation()
+    local closestPlayer = nil
+    local closestDistance = math.huge
+
+    for _, player in ipairs(Players:GetPlayers()) do
+        if player ~= localPlayer and player.Character 
+            and player.Character:FindFirstChild("HumanoidRootPart") 
+            and player.Character:FindFirstChild("Humanoid")
+            and not isTeammate(player) then  -- Add team check
+            
+            local humanoid = player.Character:FindFirstChild("Humanoid")
+            if humanoid and humanoid.Health > 0 and isTargetVisible(player.Character) then
+                local screenPos, onScreen = camera:WorldToScreenPoint(player.Character.HumanoidRootPart.Position)
+                if onScreen then
+                    local distance = (Vector2.new(mousePos.X, mousePos.Y) - Vector2.new(screenPos.X, screenPos.Y)).Magnitude
+                    if distance <= aimRadius and distance < closestDistance then
+                        local worldDistance = (localPlayer.Character.HumanoidRootPart.Position - player.Character.HumanoidRootPart.Position).Magnitude
+                        if worldDistance <= maxRange then
+                            closestDistance = distance
+                            closestPlayer = player
+                        end
+                    end
+                end
+            end
+        end
+    end
+
+    return closestPlayer
+end
+
+--click within circle
+local function isTargetInCircle(target)
+    if not target or not target.Character then return false end
+    
+    local mousePos = UserInputService:GetMouseLocation()
+    local targetRoot = target.Character:FindFirstChild("HumanoidRootPart")
+    
+    if targetRoot then
+        local screenPos, onScreen = camera:WorldToScreenPoint(targetRoot.Position)
+        if onScreen then
+            local distance = (Vector2.new(mousePos.X, mousePos.Y) - Vector2.new(screenPos.X, screenPos.Y)).Magnitude
+            return distance <= aimRadius
+        end
+    end
+    
+    return false
+end
+
+
+
+-- Function to update circle size
+local function updateCircleSize()
+    local newSize = Settings.Circle.Size * Settings.Circle.ScaleMultiplier
+    newSize = math.clamp(newSize, Settings.Circle.MinSize, Settings.Circle.MaxSize)
+    aimCircle.Size = UDim2.new(0, newSize * 2, 0, newSize * 2)
+    aimRadius = newSize
+end
+
+-- Function for click spam
+local function spamClicks()
+    if clickSpamEnabled and clickSpamActive and camlockEnabled and lockedTarget then
+        if isTargetInCircle(lockedTarget) then
+            local currentTime = tick()
+            if currentTime - lastClickTime >= clickInterval then
+                local success, err = pcall(function()
+                    local targetPos = lockedTarget.Character.HumanoidRootPart.Position
+                    local screenPos, onScreen = camera:WorldToScreenPoint(targetPos)
+                    
+                    if onScreen then
+                        VirtualInputManager:SendMouseButtonEvent(screenPos.X, screenPos.Y, 0, true, game, 1)
+                        task.wait(0.01) -- Small delay between press and release
+                        VirtualInputManager:SendMouseButtonEvent(screenPos.X, screenPos.Y, 0, false, game, 1)
+                    end
+                end)
+                
+                if success then
+                    lastClickTime = currentTime
+                else
+                    warn("Click spam error:", err)
+                end
+            end
+        end
+    end
+end
+
+
+-- Function to toggle click spam
+local function toggleClickSpam()
+    clickSpamEnabled = not clickSpamEnabled
+    clickSpamActive = clickSpamEnabled and camlockEnabled
+    
+    -- Update circle color to indicate click spam status
+    if clickSpamEnabled then
+        circleStroke.Color = Color3.fromRGB(255, 0, 0)  -- Red when click spam is enabled
+    else
+        circleStroke.Color = Color3.fromRGB(255, 255, 255)  -- White when disabled
+    end
+    
+    statusText.Text = "Camlock: Click Spam " .. (clickSpamEnabled and "ENABLED" or "DISABLED")
+end
+
+local function handleCharacterDeath()
+    camlockEnabled = false
+    lockedTarget = nil
+    statusText.Text = "Camlock: Disabled (Character Died)"
+end
+
 local function setupCharacterDeathHandler()
     local character = localPlayer.Character
     if not character then return end
@@ -104,260 +318,331 @@ local function setupCharacterDeathHandler()
     humanoid.Died:Connect(handleCharacterDeath)
 end
 
--- Initial Setup
 setupCharacterDeathHandler()
 
--- Re-attach Handler on Respawn
 localPlayer.CharacterAdded:Connect(function()
     setupCharacterDeathHandler()
-    
-    -- Reset status text after a short delay to ensure UI is ready
     task.wait(0.5)
-    if statusText then
-        statusText.Text = "Camlock: Ready (Team Check Disabled)"
-    end
+    statusText.Text = "Camlock: Ready"
 end)
--- NEW: Function to handle character death and GUI management
-local function handleCharacterDeath()
-    -- Reset camlock when character dies
-    resetCamlock()
-    
-    -- Optional: Hide or modify the UI when dead
-    if screenGui then
-        screenGui.Enabled = false
-    end
-    
-    localPlayer.CharacterAdded:Wait()
-    
-    if screenGui then
-        screenGui.Enabled = true
-    end
-    
+
+local function resetCamlock()
     camlockEnabled = false
     lockedTarget = nil
-    statusText.Text = "Camlock: Ready (Team Check Disabled)"
+    targetList = {}
+    currentTargetIndex = 1
+    camlockBrokenTime = tick()
+    clickSpamActive = false
+    circleStroke.Color = Color3.fromRGB(255, 255, 255)  -- Reset circle color
+    statusText.Text = "Camlock: Broken"
 end
-               local function resetCamlock()
-                   camlockEnabled = false
-                   lockedTarget = nil
-                   targetList = {}
-                   currentTargetIndex = 1
-                   camlockBrokenTime = tick()
-                   statusText.Text = "Camlock: Broken By Force"
-               end
 
-               local function updateCamlockStatus()
-                   if camlockEnabled then
-                       statusText.Text = teamCheck and 
-                           "Camlock: ON (Team Check Enabled)" or 
-                           "Camlock: ON (Team Check Disabled)"
-                   end
-               end
+local function toggleLockMode()
+    Settings.Mode.IsDynamic = not Settings.Mode.IsDynamic
+    statusText.Text = (Settings.Mode.IsDynamic and "Dynamic" or "Static") .. " Camlock: " .. 
+        (camlockEnabled and "ON" or "Ready")
+end
 
-               local function toggleTeamCheck()
-                   teamCheck = not teamCheck
-                   updateCamlockStatus()
-               end
+-- Update target list function
+ local function updateTargetList()
+        targetList = {}
+        
+        if not localPlayer.Character or not localPlayer.Character:FindFirstChild("HumanoidRootPart") then
+            return
+        end
+    
+        for _, player in ipairs(Players:GetPlayers()) do
+            if player ~= localPlayer and player.Character 
+                and player.Character:FindFirstChild("HumanoidRootPart") 
+                and player.Character:FindFirstChild("Humanoid") then
+                
+                local humanoid = player.Character:FindFirstChild("Humanoid")
+                if humanoid and humanoid.Health > 0 and isTargetVisible(player.Character) then -- Add wallcheck
+                    local distance = (localPlayer.Character.HumanoidRootPart.Position - player.Character.HumanoidRootPart.Position).Magnitude
+                    if distance <= maxRange then
+                        table.insert(targetList, player)
+                    end
+                end
+            end
+        end
+        
+        table.sort(targetList, function(a, b)
+            local distA = (localPlayer.Character.HumanoidRootPart.Position - a.Character.HumanoidRootPart.Position).Magnitude
+            local distB = (localPlayer.Character.HumanoidRootPart.Position - b.Character.HumanoidRootPart.Position).Magnitude
+            return distA < distB
+        end)
+    end
+-- Function to toggle camlock
+local function toggleCamlock()
+    if tick() - camlockBrokenTime < camlockRecoveryDelay then
+        statusText.Text = "Camlock: Cooling Down"
+        return
+    end
 
-               local function toggleCamlock()
-                   -- Check if enough time has passed since being broken
-                   if tick() - camlockBrokenTime < camlockRecoveryDelay then
-                       statusText.Text = "Camlock: Cooling Down"
-                       return
-                   end
-
-                   camlockEnabled = not camlockEnabled
-                   if camlockEnabled then
-                       updateTargetList()
-                       if #targetList == 0 then
-                           statusText.Text = "Camlock: No Targets Found"
-                           camlockEnabled = false
-                       else
-                           lockedTarget = targetList[1]
-                           updateCamlockStatus()
-                           statusText.Text = statusText.Text .. " - Target: " .. lockedTarget.Name
-                       end
-                   else
-                       resetCamlock()
-                       statusText.Text = "Camlock: OFF"
-                   end
-               end
-
-               -- On first load, set initial status to Ready with Team Check state
-               statusText.Text = "Camlock: Ready (Team Check " .. (teamCheck and "Enabled)" or "Disabled)")
-
-               local function updateTargetList()
-                   targetList = {}
-                   
-                   -- Improved target selection with multiple criteria
-                   for _, player in ipairs(Players:GetPlayers()) do
-                       local character = player.Character
-                       local humanoidRootPart = character and character:FindFirstChild("HumanoidRootPart")
-                       local humanoid = character and character:FindFirstChild("Humanoid")
-                       
-                       -- Team check logic
-                       local isValidTarget = player ~= localPlayer 
-                                              and humanoidRootPart 
-                                              and humanoid 
-                                              and humanoid.Health > 0
-                       
-                       if teamCheck and player.Team == localPlayer.Team then
-                           isValidTarget = false
-                       end
-                       
-                       if isValidTarget then
-                           local distance = (localPlayer.Character.HumanoidRootPart.Position - humanoidRootPart.Position).Magnitude
-                           
-                           if distance <= maxRange then
-                               table.insert(targetList, player)
-                           end
-                       end
-                   end
-                   
-                   -- Sort targets by distance
-                   table.sort(targetList, function(a, b) 
-                       local distA = (localPlayer.Character.HumanoidRootPart.Position - a.Character.HumanoidRootPart.Position).Magnitude
-                       local distB = (localPlayer.Character.HumanoidRootPart.Position - b.Character.HumanoidRootPart.Position).Magnitude
-                       return distA < distB
-                   end)
-               end
-
-               local function switchTarget()
-                   if #targetList > 0 then
-                       currentTargetIndex = currentTargetIndex % #targetList + 1
-                       lockedTarget = targetList[currentTargetIndex]
-                       statusText.Text = "Camlock: Target Switched to " .. lockedTarget.Name
-                   else
-                       statusText.Text = "Camlock: No Targets Available"
-                       resetCamlock()
-                   end
-               end
-
-               -- First-Person and Third-Person Mouse Movement Detection
-               local function detectMouseMovement()
-                   local mouseMovement = 0
-                   
-                   local success, deltaX, deltaY = pcall(function()
-                       local delta = UserInputService:GetMouseDelta()
-                       return math.abs(delta.X), math.abs(delta.Y)
-                   end)
-                   
-                   if success then
-                       mouseMovement = math.sqrt(deltaX^2 + deltaY^2)
-                   end
-                   
-                   return mouseMovement
-               end
-
-               -- Enhanced Mouse Force Breaking and Recovery Mechanism
-               local mouseMovementHistory = {}
-               local historySampleSize = 5 -- Number of previous mouse movements to track
-
-               RunService.Heartbeat:Connect(function()
-                   -- Recovery mechanism
-                   if not camlockEnabled and tick() - camlockBrokenTime >= camlockRecoveryDelay then
-                       statusText.Text = "Camlock: Ready"
-                   end
-
-                   if camlockEnabled and lockedTarget then
-                       local mouseMovement = detectMouseMovement()
-
-                       -- Store mouse movement in history
-                       table.insert(mouseMovementHistory, mouseMovement)
-                       if #mouseMovementHistory > historySampleSize then
-                           table.remove(mouseMovementHistory, 1)
-                       end
-
-                       -- Calculate average mouse movement
-                       local averageMovement = 0
-                       for _, movement in ipairs(mouseMovementHistory) do
-                           averageMovement = averageMovement + movement
-                       end
-                       averageMovement = averageMovement / #mouseMovementHistory
-
-                       -- Check if mouse movement exceeds force threshold more consistently
-                       if averageMovement > forceThreshold * 100 then
-                           resetCamlock()
-                       end
-                   end
-               end)
-
-               -- Keybinds 
-               UserInputService.InputBegan:Connect(function(input, isProcessed)
-                   if isProcessed then return end
-                   if input.KeyCode == Enum.KeyCode.Y then -- Toggle Camlock
-                       toggleCamlock()
-                   elseif input.KeyCode == Enum.KeyCode.T and camlockEnabled then -- Switch Target
-                       switchTarget()
-                   elseif input.KeyCode == Enum.KeyCode.U then -- Toggle Team Check
-                       toggleTeamCheck()
-                   end
-               end)
-
-               -- Camlock Tracking and Rendering
-               RunService.RenderStepped:Connect(function()
-                   if camlockEnabled and lockedTarget and lockedTarget.Character and lockedTarget.Character:FindFirstChild("HumanoidRootPart") then
-                       local humanoid = lockedTarget.Character:FindFirstChild("Humanoid")
-                       
-                       -- Additional null checks and health verification
-                       if not humanoid or humanoid.Health <= 0 or (teamCheck and lockedTarget.Team == localPlayer.Team) then
-                           updateTargetList()
-                           
-                           if #targetList > 0 then
-                               lockedTarget = targetList[1]
-                               statusText.Text = "Camlock: New Target " .. lockedTarget.Name
-                           else
-                               resetCamlock()
-                               statusText.Text = "Camlock: No Valid Targets"
-                               return
-                           end
-                       end
-
-                       local cameraPosition = camera.CFrame.Position
-                       local targetPosition = lockedTarget.Character.HumanoidRootPart.Position
-
-                       camera.CFrame = camera.CFrame:Lerp(CFrame.new(cameraPosition, targetPosition), smoothness)
-                   end
-               end)
-
-               -- Target Tracking
-               RunService.Heartbeat:Connect(function()
-                   if camlockEnabled then
-                       if tick() - lastUpdateTime >= trackingUpdateRate then
-                           if not lockedTarget or not lockedTarget.Character or lockedTarget.Character.Humanoid.Health <= 0 
-                              or (teamCheck and lockedTarget.Team == localPlayer.Team) then
-                               updateTargetList()
-                               
-                               if #targetList > 0 then
-                                   lockedTarget = targetList[1]
-                                   currentTargetIndex = 1
-                                   statusText.Text = "Camlock: New Target " .. lockedTarget.Name
-                               else
-                                   resetCamlock()
-                                   statusText.Text = "Camlock: No Nearby Humanoids"
-                               end
-                               
-                               lastUpdateTime = tick()
-                           end
-                       end
-                   end
-               end)
-           end
-           
-           -- Call the function to load the Camlock script
-           loadCamlockScript()
+    camlockEnabled = not camlockEnabled
+    if camlockEnabled then
+        updateTargetList()
+        if #targetList == 0 then
+            statusText.Text = "Camlock: No Targets Found"
+            camlockEnabled = false
         else
-           print("Key is invalid")
+            lockedTarget = targetList[1]
+            if lockedTarget then
+                statusText.Text = "Camlock: ON - Target: " .. lockedTarget.Name
+            end
+        end
+    else
+        resetCamlock()
+        statusText.Text = "Camlock: OFF"
+    end
+end
+
+-- Mouse movement detection
+local function detectMouseMovement()
+    local mouseMovement = 0
+    
+    local success, deltaX, deltaY = pcall(function()
+        local delta = UserInputService:GetMouseDelta()
+        return math.abs(delta.X), math.abs(delta.Y)
+    end)
+    
+    if success then
+        mouseMovement = math.sqrt(deltaX^2 + deltaY^2)
+    end
+    
+    return mouseMovement
+end
+--toggle teamcheck
+local function toggleTeamCheck()
+    Settings.Mode.TeamCheckEnabled = not Settings.Mode.TeamCheckEnabled
+    statusText.Text = "Team Check: " .. (Settings.Mode.TeamCheckEnabled and "ON" or "OFF")
+    wait(1)
+    statusText.Text = (Settings.Mode.IsDynamic and "Dynamic" or "Static") .. " Camlock: " .. 
+        (camlockEnabled and "ON" or "Ready")
+end
+
+-- Modified resetCamlock function
+local function resetCamlock()
+    camlockEnabled = false
+    lockedTarget = nil
+    targetList = {}
+    currentTargetIndex = 1
+    camlockBrokenTime = tick()
+    clickSpamActive = false  -- Reset click spam when camlock breaks
+    statusText.Text = "Camlock: Broken"
+end
+
+
+
+-- Consolidated keybinds
+UserInputService.InputBegan:Connect(function(input, isProcessed)
+    if isProcessed then return end
+    
+    if input.KeyCode == Enum.KeyCode.Y then
+        toggleCamlock()
+        clickSpamActive = clickSpamEnabled and camlockEnabled  -- Update click spam state
+    elseif input.KeyCode == Enum.KeyCode.T then
+        switchTarget()
+    elseif input.KeyCode == Enum.KeyCode.X then
+        toggleClickSpam()
+    elseif input.KeyCode == Settings.Keys.ToggleMode then
+        toggleLockMode()
+    elseif input.KeyCode == Settings.Keys.ToggleTeamCheck then
+        toggleTeamCheck()
+    elseif input.KeyCode == Settings.Keys.IncreaseSize then
+        Settings.Circle.ScaleMultiplier = Settings.Circle.ScaleMultiplier + Settings.Keys.SizeStep
+        updateCircleSize()
+    elseif input.KeyCode == Settings.Keys.DecreaseSize then
+        Settings.Circle.ScaleMultiplier = Settings.Circle.ScaleMultiplier - Settings.Keys.SizeStep
+        updateCircleSize()
+    end
+end)
+
+-- Render step update
+RunService.RenderStepped:Connect(function()
+    -- Main error handling wrapper
+    local success, err = pcall(function()
+        -- Update circle position
+        updateAimCirclePosition()
+        
+        -- Update target list on interval with error handling
+        if tick() - lastUpdateTime >= trackingUpdateRate then
+            pcall(function()
+                updateTargetList()
+                lastUpdateTime = tick()
+            end)
+        end
+        
+        -- Find closest target with error handling
+        local potentialTarget
+        pcall(function()
+            potentialTarget = findClosestPlayerInCircle()
+        end)
+        
+        -- Dynamic targeting logic
+        if Settings.Mode.IsDynamic then
+            if potentialTarget then
+                -- Handle new target acquisition
+                if potentialTarget ~= currentTarget then
+                    currentTarget = potentialTarget
+                    targetAcquisitionStartTime = tick()
+                    progressStroke.Transparency = 0.5
+                end
+                
+                -- Update progress circle
+                local acquisitionProgress = (tick() - targetAcquisitionStartTime) / targetAcquireDelay
+                progressStroke.Transparency = 0.5 - (acquisitionProgress * 0.5)
+                
+                -- Lock onto target after delay
+                if tick() - targetAcquisitionStartTime >= targetAcquireDelay then
+                    if not lockedTarget or potentialTarget ~= lockedTarget then
+                        lockedTarget = currentTarget
+                        camlockEnabled = true
+                        progressStroke.Transparency = 0
+                        statusText.Text = "Camlock: Locked on " .. lockedTarget.Name
+                        
+                        -- Reset click spam state when target changes
+                        clickSpamActive = clickSpamEnabled
+                    end
+                end
+            else
+                -- Reset when no valid target found
+                currentTarget = nil
+                if camlockEnabled then
+                    camlockEnabled = false
+                    lockedTarget = nil
+                    clickSpamActive = false
+                    statusText.Text = "Dynamic Camlock: No Target"
+                end
+                progressStroke.Transparency = 0.5
+                targetAcquisitionStartTime = 0
+            end
+        end
+
+        -- Handle active target tracking
+        if camlockEnabled and lockedTarget then
+            -- Validate target still exists and is valid
+            if lockedTarget.Character and 
+               lockedTarget.Character:FindFirstChild("HumanoidRootPart") and 
+               lockedTarget.Character:FindFirstChild("Humanoid") then
+                
+                local humanoid = lockedTarget.Character.Humanoid
+                
+                -- Check if target is still alive
+                if humanoid.Health <= 0 then
+                    resetCamlock()
+                    return
+                end
+                
+                -- Update health display
+                local healthColor = getHealthColor(humanoid.Health, humanoid.MaxHealth)
+                statusText.TextColor3 = healthColor
+                statusText.Text = string.format("Dynamic Camlock: Locked on %s - Health: %d%%", 
+                    lockedTarget.Name, 
+                    math.floor((humanoid.Health / humanoid.MaxHealth) * 100)
+                )
+                
+                -- Check if target is still visible
+                if isTargetVisible(lockedTarget.Character) then
+                    -- Camera movement with smoothing
+                    local cameraPosition = camera.CFrame.Position
+                    local targetPosition = lockedTarget.Character.HumanoidRootPart.Position
+                    
+                    -- Safe camera update
+                    local cameraMoveSuccess = pcall(function()
+                        camera.CFrame = camera.CFrame:Lerp(
+                            CFrame.new(cameraPosition, targetPosition),
+                            smoothness
+                        )
+                    end)
+                    
+                    -- Handle click spam if enabled
+                    if cameraMoveSuccess and clickSpamEnabled and clickSpamActive then
+                        spamClicks()
+                    end
+                    
+                    -- Handle mouse force break
+                    local mouseMovement = detectMouseMovement()
+                    table.insert(mouseMovementHistory, mouseMovement)
+                    if #mouseMovementHistory > historySampleSize then
+                        table.remove(mouseMovementHistory, 1)
+                    end
+                    
+                    local averageMovement = 0
+                    for _, movement in ipairs(mouseMovementHistory) do
+                        averageMovement = averageMovement + movement
+                    end
+                    averageMovement = averageMovement / #mouseMovementHistory
+                    
+                    if averageMovement > forceThreshold * 100 then
+                        resetCamlock()
+                        return
+                    end
+                else
+                    -- Target no longer visible
+                    resetCamlock()
+                    statusText.Text = "Target Lost: Not Visible"
+                    return
+                end
+            else
+                -- Target character no longer valid
+                resetCamlock()
+                statusText.Text = "Target Lost: Invalid"
+                return
+            end
+        else
+            -- Not currently locked on
+            if not Settings.Mode.IsDynamic then
+                statusText.Text = "Static Camlock: Ready"
+            else
+                statusText.Text = "Dynamic Camlock: Active"
+            end
+            statusText.TextColor3 = Color3.fromRGB(255, 255, 255)
+        end
+    end)
+    
+    -- Handle any errors in main loop
+    if not success then
+        warn("RenderStepped error:", err)
+        resetCamlock()
+        statusText.Text = "Error: Script Reset"
+        task.wait(1)
+        statusText.Text = "Dynamic Camlock: Ready"
+    end
+end)
+--error handling
+local function safeLerpCamera(target)
+    local success, err = pcall(function()
+        local cameraPosition = camera.CFrame.Position
+        local targetPosition = target.Position
+        camera.CFrame = camera.CFrame:Lerp(CFrame.new(cameraPosition, targetPosition), smoothness)
+    end)
+    
+    if not success then
+        warn("Camera movement error:", err)
+        return false
+    end
+    return true
+end
+
+-- Target tracking
+RunService.Heartbeat:Connect(function()
+    if camlockEnabled then
+        if tick() - lastUpdateTime >= trackingUpdateRate then
+            if not lockedTarget or not lockedTarget.Character or lockedTarget.Character.Humanoid.Health <= 0 then
+                updateTargetList()
+                
+                if #targetList > 0 then
+                    lockedTarget = targetList[1]
+                    currentTargetIndex = 1
+                    statusText.Text = "Camlock: Locked on " .. lockedTarget.Name
+                else
+                    resetCamlock()
+                    statusText.Text = "Camlock: No Nearby Targets"
+                end
+                
+                lastUpdateTime = tick()
+            end
         end
     end
-})
-
-local Getkey = Tabs.KeySys:AddButton({
-    Title = "Get Key",
-    Description = "Get Key here",
-    Callback = function()
-       setclipboard(KeyGuardLibrary.getLink())
-    end
-})
-
-Window:SelectTab(1)
+end)
