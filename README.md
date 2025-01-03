@@ -1,3 +1,5 @@
+https://discord.gg/jgTt7bpgPp
+
 ignore the roff code lol when i obfusated it, it turns into roff
 
 Code names:
