@@ -1,0 +1,7 @@
+V1 V1.0.0
+
+https://raw.githubusercontent.com/l3afzy/Camlock-Hub/refs/heads/main/Camlock%20V1.0.0
+
+V3 V3.0.2F
+
+loadstring(game:HttpGet("https://raw.githubusercontent.com/l3afzy/Camlock-Hub/refs/heads/main/Camlock%20V3.0.2F",true))()
